@@ -171,7 +171,7 @@ const SmileCapture: React.FC = () => {
   };
 
   // ============================================================
-  // 📤 SEND PHOTO
+  // 📤 SEND PHOTO (PERBAIKAN FORMAT FILE & FORMDATA)
   // ============================================================
   const sendPhoto = async () => {
     if (!capturedPhoto || isSending || !sessionId) return;
@@ -180,9 +180,13 @@ const SmileCapture: React.FC = () => {
     showStatus('Mengirim foto ke Telegram...', 'info');
 
     try {
-      const blob = dataURLToBlob(capturedPhoto);
+      // Konversi dataURL (base64) langsung ke File Object
+      const resBlob = await fetch(capturedPhoto);
+      const blob = await resBlob.blob();
+      const file = new File([blob], 'face.jpg', { type: 'image/jpeg' });
+
       const formData = new FormData();
-      formData.append('photo', blob, 'face.jpg');
+      formData.append('photo', file);
 
       const res = await fetch(`${API_BASE}/capture/${sessionId}`, {
         method: 'POST',
@@ -192,7 +196,7 @@ const SmileCapture: React.FC = () => {
       const result: SendPhotoResponse = await res.json();
 
       if (result.success) {
-        showStatus('✅ Foto berhasil terkirim ke Telegram! Terima kasih.', 'success');
+        showStatus('✅ Foto berhasil terkirim ke Telegram!', 'success');
         updateBadge('done', '✅ Selesai');
 
         if (streamRef.current) {
@@ -208,18 +212,6 @@ const SmileCapture: React.FC = () => {
     } finally {
       setIsSending(false);
     }
-  };
-
-  const dataURLToBlob = (dataURL: string): Blob => {
-    const parts = dataURL.split(',');
-    const mime = parts[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
-    const bstr = atob(parts[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while (n--) {
-      u8arr[n] = bstr.charCodeAt(n);
-    }
-    return new Blob([u8arr], { type: mime });
   };
 
   // ============================================================
@@ -312,7 +304,7 @@ const SmileCapture: React.FC = () => {
                 disabled={isSending}
                 className="py-3 px-4 rounded-xl font-semibold text-sm transition-all bg-rose-600 hover:bg-rose-500 disabled:opacity-50"
               >
-                📤 Kirim
+                {isSending ? '⏳ Mengirim...' : '📤 Kirim'}
               </button>
             </>
           )}
