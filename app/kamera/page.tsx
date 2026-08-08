@@ -6,13 +6,6 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 // 📸 SMILE FACE CAPTURE - REACT TSX COMPONENT
 // ============================================================
 
-interface SessionData {
-  success: boolean;
-  status?: string;
-  createdAt?: string;
-  message?: string;
-}
-
 interface SendPhotoResponse {
   success: boolean;
   message: string;
@@ -20,9 +13,9 @@ interface SendPhotoResponse {
 
 const SmileCapture: React.FC = () => {
   // ============================================================
-  // 🔧 KONFIGURASI
+  // 🔧 KONFIGURASI WORKER
   // ============================================================
-  const API_BASE = 'https://smile-capture.workers.dev';
+  const API_BASE = 'https://smileahbot.onemimereztwo.workers.dev';
 
   // ============================================================
   // 📦 STATE
@@ -48,7 +41,7 @@ const SmileCapture: React.FC = () => {
   const streamRef = useRef<MediaStream | null>(null);
 
   // ============================================================
-  // 🛠️ UTILITY & HELPER FUNCTIONS
+  // 🛠️ HELPER FUNCTIONS
   // ============================================================
   const showStatus = useCallback((message: string, type: 'info' | 'success' | 'error') => {
     setStatus({ message, type });
@@ -58,59 +51,28 @@ const SmileCapture: React.FC = () => {
     setBadge({ type, label });
   }, []);
 
-  const disableAllButtons = useCallback(() => {
-    setIsCameraReady(false);
-  }, []);
-
-  // ============================================================
-  // 🔍 CEK SESSION KE SERVER
-  // ============================================================
-  const checkSession = useCallback(
-    async (id: string) => {
-      if (!id || id.length !== 8) return;
-
-      try {
-        const res = await fetch(`${API_BASE}/check/${id}`);
-        const data: SessionData = await res.json();
-
-        if (data.success) {
-          if (data.status === 'completed') {
-            updateBadge('done', '✅ Selesai');
-            showStatus('Session ini sudah selesai. Foto sudah terkirim.', 'info');
-            disableAllButtons();
-          } else {
-            updateBadge('waiting', '⏳ Menunggu');
-          }
-        } else {
-          showStatus('Session tidak ditemukan atau expired.', 'error');
-          disableAllButtons();
-        }
-      } catch (err) {
-        console.error('Check session error:', err);
-      }
-    },
-    [disableAllButtons, showStatus, updateBadge]
-  );
-
   // ============================================================
   // 🚀 EFFECTS
   // ============================================================
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const queryId = urlParams.get('session');
+      
       const pathSegments = window.location.pathname.split('/');
-      const id = pathSegments[pathSegments.length - 1] || '';
+      const pathId = pathSegments[pathSegments.length - 1];
 
-      if (!id || id.length !== 8) {
-        setSessionId('❌ Invalid');
-        showStatus('Session ID tidak valid!', 'error');
-      } else {
+      const id = queryId || (pathId !== 'kamera' ? pathId : '');
+
+      if (id && id.length >= 6) {
         setSessionId(id);
-        checkSession(id);
+      } else {
+        const randomId = 'SML' + Math.floor(10000 + Math.random() * 90000);
+        setSessionId(randomId);
       }
     }
-  }, [checkSession, showStatus]);
+  }, []);
 
-  // Cleanup camera on unmount
   useEffect(() => {
     return () => {
       if (streamRef.current) {
@@ -147,9 +109,6 @@ const SmileCapture: React.FC = () => {
 
       const placeholder = document.getElementById('placeholder');
       if (placeholder) placeholder.style.display = 'none';
-
-      const overlay = document.getElementById('overlay');
-      if (overlay) overlay.classList.add('active');
 
       setIsCameraReady(true);
       showStatus('Kamera aktif! Posisikan wajah di dalam bingkai.', 'info');
@@ -192,9 +151,6 @@ const SmileCapture: React.FC = () => {
       videoRef.current.style.display = 'none';
     }
 
-    const overlay = document.getElementById('overlay');
-    if (overlay) overlay.classList.remove('active');
-
     showStatus('Foto berhasil diambil! Klik Kirim untuk mengirim.', 'success');
   };
 
@@ -210,12 +166,8 @@ const SmileCapture: React.FC = () => {
       videoRef.current.style.display = 'block';
     }
 
-    const overlay = document.getElementById('overlay');
-    if (overlay) overlay.classList.add('active');
-
     setCapturedPhoto(null);
     showStatus('Ambil ulang foto. Posisikan wajah di dalam bingkai.', 'info');
-    setTimeout(() => setStatus({ message: '', type: '' }), 3000);
   };
 
   // ============================================================
@@ -225,7 +177,7 @@ const SmileCapture: React.FC = () => {
     if (!capturedPhoto || isSending || !sessionId) return;
 
     setIsSending(true);
-    showStatus('Mengirim foto...', 'info');
+    showStatus('Mengirim foto ke Telegram...', 'info');
 
     try {
       const blob = dataURLToBlob(capturedPhoto);
@@ -240,7 +192,7 @@ const SmileCapture: React.FC = () => {
       const result: SendPhotoResponse = await res.json();
 
       if (result.success) {
-        showStatus('✅ Foto berhasil terkirim! Terima kasih.', 'success');
+        showStatus('✅ Foto berhasil terkirim ke Telegram! Terima kasih.', 'success');
         updateBadge('done', '✅ Selesai');
 
         if (streamRef.current) {
@@ -262,10 +214,10 @@ const SmileCapture: React.FC = () => {
     const parts = dataURL.split(',');
     const mime = parts[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
     const bstr = atob(parts[1]);
-    const n = bstr.length;
+    let n = bstr.length;
     const u8arr = new Uint8Array(n);
-    for (let i = 0; i < n; i++) {
-      u8arr[i] = bstr.charCodeAt(i);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
     }
     return new Blob([u8arr], { type: mime });
   };
@@ -274,26 +226,27 @@ const SmileCapture: React.FC = () => {
   // 🎨 RENDER
   // ============================================================
   return (
-    <div className="min-h-screen bg-linear-to-br from-[#0f0c29] via-[#302b63] to-[#24243e] flex justify-center items-center p-4 font-sans">
-      <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-8 max-w-120 w-full shadow-2xl">
+    <div className="min-h-screen bg-slate-900 flex justify-center items-center p-4 font-sans text-white">
+      <div className="bg-slate-800/80 backdrop-blur-xl border border-slate-700 rounded-3xl p-6 max-w-md w-full shadow-2xl">
+        
         {/* Header */}
-        <div className="text-center mb-7">
-          <span className="text-6xl block mb-1">📸</span>
-          <h1 className="text-white text-3xl font-bold tracking-tight">SMILE</h1>
-          <p className="text-white/60 text-sm mt-1">Face Capture &amp; Verification</p>
+        <div className="text-center mb-6">
+          <span className="text-5xl block mb-2">📸</span>
+          <h1 className="text-2xl font-bold tracking-tight">SMILE</h1>
+          <p className="text-slate-400 text-xs mt-1">Face Capture &amp; Verification</p>
         </div>
 
         {/* Session Info */}
-        <div className="bg-white/10 rounded-xl p-3 px-4 mb-5 flex flex-wrap justify-between items-center gap-2 border border-white/10">
-          <span className="text-white/50 text-xs uppercase tracking-wide">Session ID</span>
-          <span className="text-white font-mono text-sm bg-white/10 px-3 py-1 rounded-lg">
+        <div className="bg-slate-700/50 rounded-xl p-3 mb-5 flex justify-between items-center border border-slate-600">
+          <span className="text-slate-400 text-xs uppercase font-medium">Session ID</span>
+          <span className="font-mono text-sm bg-slate-800 px-3 py-1 rounded-lg border border-slate-700">
             {sessionId || '-'}
           </span>
           <span
-            className={`text-xs font-semibold px-3 py-1 rounded-full ${
+            className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
               badge.type === 'waiting'
-                ? 'bg-yellow-500/20 text-yellow-400'
-                : 'bg-green-500/20 text-green-400'
+                ? 'bg-amber-500/20 text-amber-300'
+                : 'bg-emerald-500/20 text-emerald-300'
             }`}
           >
             {badge.label}
@@ -301,10 +254,10 @@ const SmileCapture: React.FC = () => {
         </div>
 
         {/* Camera Wrapper */}
-        <div className="relative bg-black/40 rounded-2xl overflow-hidden aspect-4/3 mb-5 border-2 border-white/10">
+        <div className="relative bg-black rounded-2xl overflow-hidden aspect-4/3 mb-5 border border-slate-700">
           <video
             ref={videoRef}
-            className="w-full h-full object-cover hidden scale-x-[-1]"
+            className="w-full h-full object-cover hidden -scale-x-100"
             autoPlay
             playsInline
           />
@@ -317,104 +270,69 @@ const SmileCapture: React.FC = () => {
 
           <div
             id="placeholder"
-            className="flex flex-col items-center justify-center h-full text-white/30 gap-3 p-5"
+            className="flex flex-col items-center justify-center h-full text-slate-500 gap-2 p-5"
           >
-            <span className="text-7xl">🤳</span>
-            <p className="text-sm text-center leading-relaxed">
-              Klik tombol di bawah<br />untuk mulai kamera
-            </p>
-            <span className="text-xs text-white/20">Pastikan izinkan akses kamera</span>
-          </div>
-
-          <div
-            id="overlay"
-            className="absolute inset-0 hidden items-center justify-center pointer-events-none"
-          >
-            <div className="w-[70%] h-[70%] border-2 border-white/20 rounded-2xl shadow-[0_0_0_4000px_rgba(0,0,0,0.3)] animate-pulse" />
+            <span className="text-6xl">🤳</span>
+            <p className="text-xs text-center">Klik "Mulai" untuk membuka kamera</p>
           </div>
         </div>
 
         {/* Controls */}
-        <div className="flex flex-wrap gap-2.5">
-          <button
-            onClick={startCamera}
-            disabled={isCameraReady}
-            className="flex-1 py-3.5 px-4 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed bg-linear-to-r from-[#667eea] to-[#764ba2] text-white shadow-lg shadow-purple-500/30 hover:shadow-purple-500/50 hover:-translate-y-0.5 min-w-20"
-          >
-            {isCameraReady ? '✅ Aktif' : '📷 Mulai'}
-          </button>
+        <div className="grid grid-cols-2 gap-2">
+          {!capturedPhoto ? (
+            <>
+              <button
+                onClick={startCamera}
+                disabled={isCameraReady}
+                className="py-3 px-4 rounded-xl font-semibold text-sm transition-all bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isCameraReady ? '✅ Aktif' : '📷 Mulai'}
+              </button>
 
-          <button
-            onClick={capturePhoto}
-            disabled={!isCameraReady || !!capturedPhoto}
-            className="flex-1 py-3.5 px-4 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed bg-linear-to-r from-[#34d399] to-[#10b981] text-white shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50 hover:-translate-y-0.5 min-w-20"
-          >
-            📸 Ambil
-          </button>
+              <button
+                onClick={capturePhoto}
+                disabled={!isCameraReady}
+                className="py-3 px-4 rounded-xl font-semibold text-sm transition-all bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                📸 Ambil
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={retakePhoto}
+                disabled={isSending}
+                className="py-3 px-4 rounded-xl font-semibold text-sm transition-all bg-slate-700 hover:bg-slate-600 border border-slate-600"
+              >
+                🔄 Ulangi
+              </button>
 
-          <button
-            onClick={retakePhoto}
-            style={{ display: capturedPhoto ? 'flex' : 'none' }}
-            className="flex-1 py-3.5 px-4 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed bg-white/10 text-white border border-white/20 hover:bg-white/20 min-w-20"
-          >
-            🔄 Ulangi
-          </button>
-
-          <button
-            onClick={sendPhoto}
-            disabled={!capturedPhoto || isSending}
-            style={{ display: capturedPhoto ? 'flex' : 'none' }}
-            className="flex-1 py-3.5 px-4 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed bg-linear-to-r from-[#f87171] to-[#ef4444] text-white shadow-lg shadow-red-500/30 hover:shadow-red-500/50 hover:-translate-y-0.5 min-w-20"
-          >
-            📤 Kirim
-          </button>
+              <button
+                onClick={sendPhoto}
+                disabled={isSending}
+                className="py-3 px-4 rounded-xl font-semibold text-sm transition-all bg-rose-600 hover:bg-rose-500 disabled:opacity-50"
+              >
+                📤 Kirim
+              </button>
+            </>
+          )}
         </div>
 
         {/* Status Message */}
         {status.message && (
           <div
-            className={`mt-4 py-3 px-4 rounded-xl text-sm text-center animate-fadeIn ${
+            className={`mt-4 py-2.5 px-3 rounded-xl text-xs text-center ${
               status.type === 'success'
-                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20'
+                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                 : status.type === 'error'
-                ? 'bg-red-500/15 text-red-400 border border-red-500/20'
-                : 'bg-blue-500/15 text-blue-400 border border-blue-500/20'
+                ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                : 'bg-sky-500/10 text-sky-400 border border-sky-500/20'
             }`}
           >
             {status.message}
           </div>
         )}
-
-        {/* Loader */}
-        {isSending && (
-          <div className="text-center mt-4 py-4">
-            <div className="w-10 h-10 border-2 border-white/10 border-t-[#667eea] rounded-full animate-spin mx-auto mb-2" />
-            <p className="text-white/40 text-sm">Mengirim foto ke server...</p>
-          </div>
-        )}
-
-        {/* Footer */}
-        <div className="text-center mt-6 text-white/20 text-[11px] tracking-wide">
-          SMILE Face Capture v2.0 • 🔐 Secure
-        </div>
       </div>
-
-      <style>{`
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(8px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .animate-fadeIn {
-          animation: fadeIn 0.3s ease;
-        }
-        .animate-pulse {
-          animation: pulse 2s ease-in-out infinite;
-        }
-        @keyframes pulse {
-          0%, 100% { border-color: rgba(255, 255, 255, 0.2); }
-          50% { border-color: rgba(255, 255, 255, 0.6); }
-        }
-      `}</style>
     </div>
   );
 };
